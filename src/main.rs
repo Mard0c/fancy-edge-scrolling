@@ -1,15 +1,18 @@
 use evdev_rs::{
-    Device, DeviceWrapper, InputEvent, ReadFlag, TimeVal,
+    Device, DeviceWrapper, InputEvent, ReadFlag,
     enums::{EV_ABS, EV_KEY, EventCode},
 };
 use std::{
     fs,
     path::Path,
     process::{Command, Stdio},
+    thread::sleep,
+    time::Duration,
 };
 
 static RATE_LIMIT: i64 = 150000; //microseconds
 static SCALING: f32 = 4000.0;
+static EDGE_THICKNESS: f64 = 0.05;
 
 #[derive(PartialEq, Debug, Clone, Copy)]
 enum EdgeScroll {
@@ -28,7 +31,7 @@ fn adjust_volume(adjustment: i64) {
     let volume_arg = volume_arg.as_str();
 
     let _ = Command::new("wpctl")
-        .args(["set-volume", "@DEFAULT_AUDIO_SINK@", volume_arg])
+        .args(["set-volume", "-l", "1", "@DEFAULT_AUDIO_SINK@", volume_arg])
         .spawn();
 }
 
@@ -54,7 +57,7 @@ fn find_touchpad_device() -> Option<Device> {
             let device = Device::new_from_path(path.path()).unwrap();
 
             if device.name().unwrap().to_lowercase().contains("touchpad") {
-                println!("success :3");
+                println!("found touchpad");
                 return Some(device);
             }
         }
@@ -93,7 +96,7 @@ fn vertical_edge_scroll(
             EdgeScroll::Left => {
                 adjust_volume(velocity);
             }
-            _ => println!("ERROR"),
+            _ => println!("ERROR?!"),
         }
         // println!("velocity: {}", velocity);
         *previous_event = event.clone();
@@ -105,7 +108,6 @@ fn main() {
     let touchpad_device = find_touchpad_device().unwrap();
 
     let mut touchpad_range: [Option<i32>; 2] = [None, None];
-    let scroll_space = 0.05;
 
     let mut previous_event: Option<InputEvent> = None;
 
@@ -114,6 +116,10 @@ fn main() {
     let mut watch_for_edge_scroll = false;
 
     loop {
+        if !touchpad_device.has_event_pending() {
+            sleep(Duration::from_millis(1));
+            continue;
+        }
         let event_result = touchpad_device
             .next_event(ReadFlag::NORMAL)
             .map(|val| val.1);
@@ -134,7 +140,7 @@ fn main() {
                                         if watch_for_edge_scroll {
                                             // brightness
                                             if input_event.value
-                                                > (range_x as f64 * (1.0 - scroll_space)) as i32
+                                                > (range_x as f64 * (1.0 - EDGE_THICKNESS)) as i32
                                             {
                                                 edge_scroll_target = Some(EdgeScroll::Right);
                                             } else {
@@ -143,7 +149,7 @@ fn main() {
 
                                             // volume
                                             if input_event.value
-                                                < (range_x as f64 * scroll_space) as i32
+                                                < (range_x as f64 * EDGE_THICKNESS) as i32
                                             {
                                                 edge_scroll_target = Some(EdgeScroll::Left);
                                             }
@@ -198,5 +204,6 @@ fn main() {
             }
             Err(_e) => (),
         }
+        sleep(Duration::from_millis(1));
     }
 }
