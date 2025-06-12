@@ -38,6 +38,9 @@ If you're lucky you can probably just download the binary from this github (targ
 
 Anyway, if this all works just run the following commands:
 ```
+usermod -aG input $USER
+```
+```
 systemctl --user daemon-reload
 ```
 ```
