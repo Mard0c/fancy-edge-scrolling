@@ -2,15 +2,9 @@ use evdev_rs::{
     Device, DeviceWrapper, InputEvent, ReadFlag,
     enums::{EV_ABS, EV_KEY, EventCode},
 };
-use std::{
-    fs,
-    io::Error,
-    path::Path,
-    process::{Command, Stdio},
-    thread,
-    thread::sleep,
-    time::Duration,
-};
+use std::{fs, io::Error, path::Path, thread::sleep, time::Duration};
+
+mod commands;
 
 static RATE_LIMIT: i64 = 150000; //microseconds
 static SCALING: f32 = 4000.0;
@@ -22,58 +16,6 @@ enum EdgeZone {
     Right,
     Top,
     // Bottom,
-}
-
-fn adjust_volume(adjustment: i64) {
-    let volume_arg = if adjustment < 0 {
-        format!("{}%-", adjustment.abs())
-    } else {
-        format!("{}%+", adjustment)
-    };
-    let volume_arg = volume_arg.as_str();
-
-    let _ = Command::new("wpctl")
-        .args(["set-volume", "-l", "1", "@DEFAULT_AUDIO_SINK@", volume_arg])
-        .spawn();
-}
-
-fn adjust_brightness(adjustment: i64) {
-    let brightness_arg = if adjustment < 0 {
-        format!("{}%-", adjustment.abs())
-    } else {
-        format!("{}%+", adjustment)
-    };
-    let brightness_arg = brightness_arg.as_str();
-
-    let _ = Command::new("brightnessctl")
-        .args(["set", brightness_arg])
-        .stdout(Stdio::null())
-        .spawn();
-}
-
-fn scrub(adjustment: i64) {
-    let scrub_arg = if adjustment > 0 { "105" } else { "106" };
-
-    match Command::new("ydotool").args(["key", scrub_arg]).status() {
-        Ok(s) => println!("tried something? {}, with status: {:#?}", scrub_arg, s),
-        Err(e) => println!("Failed to run ydotool: {}", e),
-    }
-}
-
-fn status_bar(summoned: bool) {
-    thread::spawn(move || {
-        if summoned {
-            match Command::new("waybar").stdout(Stdio::null()).status() {
-                Ok(s) => println!("{}", s),
-                Err(e) => println!("Error summoning status bar: {}", e),
-            }
-        } else {
-            match Command::new("pkill").arg("waybar").status() {
-                Ok(s) => println!("Exit status: {}", s),
-                Err(e) => println!("Error killing status bar: {}", e),
-            }
-        }
-    });
 }
 
 fn find_touchpad_device() -> Result<Device, Error> {
@@ -121,10 +63,10 @@ fn vertical_edge_scroll(
 
         match edge_scroll_target {
             EdgeZone::Right => {
-                adjust_brightness(velocity);
+                commands::adjust_brightness(velocity);
             }
             EdgeZone::Left => {
-                adjust_volume(velocity);
+                commands::adjust_volume(velocity);
             }
             _ => println!("ERROR?!"),
         }
@@ -155,7 +97,7 @@ fn horizontal_edge_scroll(
                 } else {
                     -1
                 };
-                // scrub(adjustment);
+                commands::scrub(adjustment);
             }
             _ => println!("ERROR?!"),
         }
@@ -163,6 +105,7 @@ fn horizontal_edge_scroll(
         *previous_event = event.clone();
     }
 }
+
 fn main() {
     // let touchpad_device = Device::new_from_path("/dev/input/event7").unwrap();
     let touchpad_device = find_touchpad_device().unwrap();
@@ -176,7 +119,6 @@ fn main() {
     let mut pulled = false;
 
     let mut watch = false;
-    let mut watch_for_pull_scroll = false;
 
     loop {
         if !touchpad_device.has_event_pending() {
@@ -215,19 +157,6 @@ fn main() {
                                             edge_scroll_target = None; // TODO figure out a way to watch for edge scroll once on x and y axis before seizing to watch.
                                         }
                                     }
-                                    // if watch_for_pull_scroll {
-                                    //     if ((range_x as f64 * (1.0 - EDGE_THICKNESS)) as i32)
-                                    //         > input_event.value
-                                    //         && input_event.value
-                                    //             > ((range_x as f64 * EDGE_THICKNESS) as i32)
-                                    //     {
-                                    //         edge_pull_target = Some(EdgeZone::Top);
-                                    //         watch_for_pull_scroll = false;
-                                    //         println!(
-                                    //             "Assigned STATUS, no longer watching for pull"
-                                    //         );
-                                    //     }
-                                    // }
                                     match edge_scroll_target {
                                         Some(EdgeZone::Top) => {
                                             if let Some(ref mut previous_event) = previous_event {
@@ -256,10 +185,10 @@ fn main() {
                                         if input_event.value
                                             < (range_y as f64 * EDGE_THICKNESS) as i32
                                         {
-                                            println!(
-                                                "Edge scroll target {:#?}",
-                                                edge_scroll_target
-                                            );
+                                            // println!(
+                                            //     "Edge scroll target {:#?}",
+                                            //     edge_scroll_target
+                                            // );
                                             edge_scroll_target = Some(EdgeZone::Top);
                                             edge_pull_target = Some(EdgeZone::Top);
                                             watch = false;
@@ -274,7 +203,7 @@ fn main() {
                                                 && input_event.value
                                                     > (range_y as f64 * EDGE_THICKNESS) as i32
                                             {
-                                                status_bar(true);
+                                                commands::status_bar(true);
                                                 edge_pull_target = None;
                                                 pulled = true;
                                             }
@@ -312,8 +241,7 @@ fn main() {
                                 // println!("RESET");
                             }
                             if pulled {
-                                println!("should kill waybar");
-                                status_bar(false);
+                                commands::status_bar(false);
                                 pulled = false;
                             }
                             if edge_pull_target.is_some() {
