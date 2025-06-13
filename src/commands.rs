@@ -1,5 +1,4 @@
 use std::{
-    fs::DirBuilder,
     process::{Command, Stdio},
     thread,
 };

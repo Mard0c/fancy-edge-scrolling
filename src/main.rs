@@ -87,6 +87,17 @@ fn horizontal_edge_scroll(
     previous_event: &mut InputEvent,
     event: &InputEvent,
 ) {
+    match edge_scroll_target {
+        EdgeZone::Top => {
+            let scrub_state = if previous_event.value > event.value {
+                commands::ScrubState::Left(commands::KeyState::Down)
+            } else {
+                commands::ScrubState::Right(commands::KeyState::Down)
+            };
+            commands::scrub(scrub_state);
+        }
+        _ => println!("ERROR?!"),
+    }
     let time_difference = if event.time.tv_sec == previous_event.time.tv_sec {
         event.time.tv_usec - previous_event.time.tv_usec
     } else {
@@ -97,17 +108,6 @@ fn horizontal_edge_scroll(
     // let position_difference = event.value - previous_event.value;
 
     if time_difference > RATE_LIMIT {
-        match edge_scroll_target {
-            EdgeZone::Top => {
-                let scrub_state = if previous_event.value > event.value {
-                    commands::ScrubState::Left(commands::KeyState::Down)
-                } else {
-                    commands::ScrubState::Right(commands::KeyState::Down)
-                };
-                commands::scrub(scrub_state);
-            }
-            _ => println!("ERROR?!"),
-        }
         // println!("velocity: {}", velocity);
         *previous_event = event.clone();
     }
@@ -115,12 +115,10 @@ fn horizontal_edge_scroll(
 
 fn main() {
     let touchpad_device = find_device("touchpad").unwrap();
-
     let mut touchpad_range: [Option<i32>; 2] = [None, None];
 
-    let mut previous_event: Option<InputEvent> = None;
-
     let mut watch = false;
+    let mut previous_event: Option<InputEvent> = None;
     let mut edge_scroll_target: Option<EdgeZone> = None;
 
     let mut edge_pull_target: Option<EdgeZone> = None;
