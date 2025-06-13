@@ -53,3 +53,13 @@ systemctl --user start edge-scroll
 That's it!
 
 Good luck...
+
+---
+
+Dev commands I keep forgetting:
+```bash
+libinput list-devices
+```
+```bash
+cp target/release/edge-scroll /usr/local/bin/edge-scroll
+```

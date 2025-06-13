@@ -15,25 +15,32 @@ enum EdgeZone {
     Left,
     Right,
     Top,
-    // Bottom,
 }
 
-fn find_touchpad_device() -> Result<Device, Error> {
+fn find_device(device_identifier: &str) -> Result<Device, Error> {
     let device_list_dir = fs::read_dir(Path::new("/dev/input"))?;
     for path in device_list_dir {
         let path = path?;
         if path.file_name().to_str().unwrap().starts_with("event") {
             let device = Device::new_from_path(path.path())?;
 
-            if device.name().unwrap().to_lowercase().contains("touchpad") {
-                println!("found touchpad");
+            if device
+                .name()
+                .unwrap()
+                .to_lowercase()
+                .contains(device_identifier)
+            {
+                println!("found {}", device_identifier);
                 return Ok(device);
             }
         }
     }
     Err(Error::new(
         std::io::ErrorKind::Other,
-        "Couldn't find touchpad for some bloody reason...",
+        format!(
+            "Couldn't find device with name containing '{}'",
+            device_identifier
+        ),
     ))
 }
 
@@ -87,17 +94,17 @@ fn horizontal_edge_scroll(
         seconds_difference * 1000000 + (event.time.tv_usec - previous_event.time.tv_usec)
     };
 
-    let position_difference = event.value - previous_event.value;
+    // let position_difference = event.value - previous_event.value;
 
     if time_difference > RATE_LIMIT {
         match edge_scroll_target {
             EdgeZone::Top => {
-                let adjustment = if previous_event.value > event.value {
-                    1
+                let scrub_state = if previous_event.value > event.value {
+                    commands::ScrubState::Left(commands::KeyState::Down)
                 } else {
-                    -1
+                    commands::ScrubState::Right(commands::KeyState::Down)
                 };
-                commands::scrub(adjustment);
+                commands::scrub(scrub_state);
             }
             _ => println!("ERROR?!"),
         }
@@ -107,18 +114,17 @@ fn horizontal_edge_scroll(
 }
 
 fn main() {
-    // let touchpad_device = Device::new_from_path("/dev/input/event7").unwrap();
-    let touchpad_device = find_touchpad_device().unwrap();
+    let touchpad_device = find_device("touchpad").unwrap();
 
     let mut touchpad_range: [Option<i32>; 2] = [None, None];
 
     let mut previous_event: Option<InputEvent> = None;
 
+    let mut watch = false;
     let mut edge_scroll_target: Option<EdgeZone> = None;
+
     let mut edge_pull_target: Option<EdgeZone> = None;
     let mut pulled = false;
-
-    let mut watch = false;
 
     loop {
         if !touchpad_device.has_event_pending() {
@@ -129,135 +135,137 @@ fn main() {
             .next_event(ReadFlag::NORMAL)
             .map(|val| val.1);
         match event_result {
-            Ok(input_event) => {
-                // println!("{:#?}", input_event);
-                match input_event.event_code {
-                    EventCode::EV_ABS(abs_enum) => {
-                        match abs_enum {
-                            EV_ABS::ABS_X => match touchpad_range[0] {
-                                None => match touchpad_device.abs_info(&input_event.event_code) {
-                                    Some(info) => touchpad_range[0] = Some(info.maximum),
-                                    None => println!("Could not find touchpad range"),
-                                },
-                                Some(range_x) => {
-                                    if watch {
-                                        if input_event.value // brightness
+            Ok(input_event) => match input_event.event_code {
+                EventCode::EV_ABS(abs_axis) => match abs_axis {
+                    EV_ABS::ABS_X => match touchpad_range[0] {
+                        None => match touchpad_device.abs_info(&input_event.event_code) {
+                            Some(info) => touchpad_range[0] = Some(info.maximum),
+                            None => println!("Could not find touchpad range"),
+                        },
+                        Some(range_x) => {
+                            if watch {
+                                if input_event.value // brightness
                                                 > (range_x as f64 * (1.0 - EDGE_THICKNESS)) as i32
-                                        {
-                                            edge_scroll_target = Some(EdgeZone::Right);
-                                            watch = false;
-                                            println!("no longer watching");
-                                        } else if input_event.value // volume
+                                {
+                                    edge_scroll_target = Some(EdgeZone::Right);
+                                    watch = false;
+                                    println!("no longer watching");
+                                } else if input_event.value // volume
                                                 < (range_x as f64 * EDGE_THICKNESS) as i32
-                                        {
-                                            edge_scroll_target = Some(EdgeZone::Left);
-                                            watch = false;
-                                            println!("no longer watching");
-                                        } else {
-                                            edge_scroll_target = None; // TODO figure out a way to watch for edge scroll once on x and y axis before seizing to watch.
-                                        }
-                                    }
-                                    match edge_scroll_target {
-                                        Some(EdgeZone::Top) => {
-                                            if let Some(ref mut previous_event) = previous_event {
-                                                horizontal_edge_scroll(
-                                                    &edge_scroll_target.unwrap(),
-                                                    previous_event,
-                                                    &input_event,
-                                                );
-                                            } else {
-                                                previous_event = Some(input_event);
-                                            }
-                                        }
-                                        _ => (),
+                                {
+                                    edge_scroll_target = Some(EdgeZone::Left);
+                                    watch = false;
+                                    println!("no longer watching");
+                                } else {
+                                    edge_scroll_target = None; // TODO figure out a way to watch for edge scroll once on x and y axis before seizing to watch.
+                                }
+                            }
+                            match edge_scroll_target {
+                                Some(EdgeZone::Top) => {
+                                    if let Some(ref mut previous_event) = previous_event {
+                                        horizontal_edge_scroll(
+                                            &edge_scroll_target.unwrap(),
+                                            previous_event,
+                                            &input_event,
+                                        );
+                                    } else {
+                                        previous_event = Some(input_event);
                                     }
                                 }
-                            },
+                                _ => (),
+                            }
+                        }
+                    },
 
-                            EV_ABS::ABS_Y => match touchpad_range[1] {
-                                None => match touchpad_device.abs_info(&input_event.event_code) {
-                                    Some(info) => touchpad_range[1] = Some(info.maximum),
-                                    None => println!("Could not find touchpad range"),
-                                },
-                                Some(range_y) => {
-                                    // println!("watching? {}", watch_for_edge_scroll);
-                                    if watch {
-                                        if input_event.value
-                                            < (range_y as f64 * EDGE_THICKNESS) as i32
-                                        {
-                                            // println!(
-                                            //     "Edge scroll target {:#?}",
-                                            //     edge_scroll_target
-                                            // );
-                                            edge_scroll_target = Some(EdgeZone::Top);
-                                            edge_pull_target = Some(EdgeZone::Top);
-                                            watch = false;
-                                        } else {
-                                            edge_scroll_target = None;
-                                        }
-                                    }
+                    EV_ABS::ABS_Y => match touchpad_range[1] {
+                        None => match touchpad_device.abs_info(&input_event.event_code) {
+                            Some(info) => touchpad_range[1] = Some(info.maximum),
+                            None => println!("Could not find touchpad range"),
+                        },
+                        Some(range_y) => {
+                            // println!("watching? {}", watch_for_edge_scroll);
+                            if watch {
+                                if input_event.value < (range_y as f64 * EDGE_THICKNESS) as i32 {
+                                    // println!(
+                                    //     "Edge scroll target {:#?}",
+                                    //     edge_scroll_target
+                                    // );
+                                    edge_scroll_target = Some(EdgeZone::Top);
+                                    edge_pull_target = Some(EdgeZone::Top);
+                                    watch = false;
+                                } else {
+                                    edge_scroll_target = None;
+                                }
+                            }
 
-                                    match edge_pull_target {
-                                        Some(EdgeZone::Top) => {
-                                            if !pulled
-                                                && input_event.value
-                                                    > (range_y as f64 * EDGE_THICKNESS) as i32
-                                            {
-                                                commands::status_bar(true);
-                                                edge_pull_target = None;
-                                                pulled = true;
-                                            }
-                                        }
-                                        _ => (),
-                                    }
-
-                                    match edge_scroll_target {
-                                        Some(EdgeZone::Right) | Some(EdgeZone::Left) => {
-                                            if let Some(ref mut previous_event) = previous_event {
-                                                vertical_edge_scroll(
-                                                    &edge_scroll_target.unwrap(),
-                                                    previous_event,
-                                                    &input_event,
-                                                );
-                                            } else {
-                                                previous_event = Some(input_event);
-                                            }
-                                        }
-                                        Some(_) | None => (),
+                            match edge_pull_target {
+                                Some(EdgeZone::Top) => {
+                                    if !pulled
+                                        && input_event.value
+                                            > (range_y as f64 * EDGE_THICKNESS) as i32
+                                    {
+                                        commands::status_bar(true);
+                                        edge_pull_target = None;
+                                        pulled = true;
                                     }
                                 }
-                            },
-                            _ => (),
-                        }
-                        // println!("ABS ENUM: {:#?}, ev val: {}", abs_enum, input_event.value)
-                    }
-                    EventCode::EV_KEY(key) => {
-                        // println!("{:#?}", key);
-                        if key == EV_KEY::BTN_TOUCH && input_event.value == 0 {
-                            if previous_event.is_some() && edge_scroll_target.is_some() {
-                                previous_event = None;
-                                edge_scroll_target = None;
-                                watch = false;
-                                // println!("RESET");
+                                Some(zone) => println!("undefined pull behaviour for {:#?}", zone),
+                                None => (),
                             }
-                            if pulled {
-                                commands::status_bar(false);
-                                pulled = false;
-                            }
-                            if edge_pull_target.is_some() {
-                                edge_pull_target = None;
+
+                            match edge_scroll_target {
+                                Some(EdgeZone::Right) | Some(EdgeZone::Left) => {
+                                    if let Some(ref mut previous_event) = previous_event {
+                                        vertical_edge_scroll(
+                                            &edge_scroll_target.unwrap(),
+                                            previous_event,
+                                            &input_event,
+                                        );
+                                    } else {
+                                        previous_event = Some(input_event);
+                                    }
+                                }
+                                Some(_) | None => (),
                             }
                         }
-                        if key == EV_KEY::BTN_TOUCH && input_event.value == 1 {
-                            watch = true;
-                            // println!("STARTING");
-                        }
-                    }
+                    },
                     _ => (),
+                },
+                EventCode::EV_KEY(key) => {
+                    // println!("{:#?}", key);
+                    if key == EV_KEY::BTN_TOUCH && input_event.value == 1 {
+                        watch = true;
+                        // println!("STARTING");
+                    }
+
+                    if key == EV_KEY::BTN_TOUCH && input_event.value == 0 {
+                        if previous_event.is_some() && edge_scroll_target.is_some() {
+                            if edge_scroll_target == Some(EdgeZone::Top) {
+                                commands::scrub(commands::ScrubState::Left(commands::KeyState::Up));
+                                commands::scrub(commands::ScrubState::Right(
+                                    commands::KeyState::Up,
+                                ));
+                            }
+                            previous_event = None;
+                            edge_scroll_target = None;
+                            watch = false;
+                            // println!("RESET");
+                        }
+                        if pulled {
+                            commands::status_bar(false);
+                            pulled = false;
+                        }
+                        if edge_pull_target.is_some() {
+                            edge_pull_target = None;
+                        }
+                    }
                 }
-            }
+                _ => (),
+            },
             Err(_e) => (),
         }
         sleep(Duration::from_millis(1));
     }
 }
+
+mod tests {}

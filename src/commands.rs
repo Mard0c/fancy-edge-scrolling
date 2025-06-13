@@ -1,4 +1,5 @@
 use std::{
+    fs::DirBuilder,
     process::{Command, Stdio},
     thread,
 };
@@ -30,13 +31,32 @@ pub fn adjust_brightness(adjustment: i64) {
         .spawn();
 }
 
-pub fn scrub(adjustment: i64) {
-    let scrub_arg = if adjustment > 0 { "105" } else { "106" };
+#[derive(Debug)]
+pub enum KeyState {
+    Up = 0,
+    Down = 1,
+}
 
-    match Command::new("ydotool").args(["key", scrub_arg]).status() {
-        Ok(s) => println!("tried something? {}, with status: {:#?}", scrub_arg, s),
-        Err(e) => println!("Failed to run ydotool: {}", e),
-    }
+#[derive(Debug)]
+pub enum ScrubState {
+    Left(KeyState),
+    Right(KeyState),
+}
+
+pub fn scrub(state: ScrubState) {
+    let scrub_arg = format!(
+        "{}:{}",
+        match state {
+            ScrubState::Left(_) => "105",
+            ScrubState::Right(_) => "106",
+        },
+        match state {
+            ScrubState::Left(dir) | ScrubState::Right(dir) => format!("{}", dir as isize),
+        }
+    );
+    let _ = Command::new("ydotool")
+        .args(["key", scrub_arg.as_str()])
+        .spawn();
 }
 
 pub fn status_bar(summoned: bool) {
